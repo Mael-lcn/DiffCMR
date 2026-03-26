@@ -4,7 +4,7 @@ from time import gmtime, strftime
 
 import torch
 import torchvision.transforms as transforms
-from torch import optim
+import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -86,7 +86,13 @@ def main():
     if torch.cuda.is_available():
         dist_util.GPUS_PER_NODE = torch.cuda.device_count()
     dist_util.setup_dist()
-    logger.configure(dir=args.logdir)
+
+    # SEUL LE RANK 0 EST AUTORISÉ À ACTIVER LE LOGGER COMPLET
+    if dist.get_rank() == 0:
+        logger.configure(dir=args.logdir, format_strs=["stdout", "log", "csv"])
+    else:
+        # Les autres GPUs ne font rien (désactivation silencieuse)
+        logger.configure(dir=args.logdir, format_strs=[])
 
     # Création du Modèle et de la Diffusion
     logger.log("creating model and diffusion...")
