@@ -59,7 +59,7 @@ def create_argparser():
         num_workers=4,
 
         # --- Fréquence de sauvegarde et Logs ---
-        log_interval=50,
+        log_interval=500,
         save_interval=2000,
         start_print_iter=1000000,
         resume_checkpoint="",
