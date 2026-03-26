@@ -23,10 +23,6 @@ warnings.filterwarnings('ignore')
 from torch.utils.data.distributed import DistributedSampler
 
 import argparse
-import logging
-import os
-import random
-import sys
 
 import torchvision.transforms as transforms
 
