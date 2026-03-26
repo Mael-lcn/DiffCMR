@@ -1,11 +1,8 @@
 """
 To generate img data from the raw mat file
 """
-import os
-import torch
 import numpy as np
 from torch.utils.data import Dataset
-from PIL import Image
 from torchvision import transforms
 from torchvision import utils
 SCALE = 100000
@@ -45,10 +42,22 @@ class CMRxReconDataset(Dataset):
     
     def __getitem__(self, index):
         path, GT_path = self.train_pairs[index].replace("\n","").split(" ")
-        item = np.float32(np.load(path))
-        GT_item = np.float32(np.load(GT_path))
+        
+        # Chargement des volumes complets (Frames, H, W)
+        item_full = np.float32(np.load(path))
+        GT_item_full = np.float32(np.load(GT_path))
+        
+        # SÉLECTION DE LA FRAME : Résolution du bug de dimension
+        num_frames = item_full.shape[0]
+        random_frame_idx = random.randint(0, num_frames - 1)
+        
+        # On extrait la frame aléatoire pour obtenir une image 2D (H, W)
+        item = item_full[random_frame_idx]
+        GT_item = GT_item_full[random_frame_idx]
+
         output = {"input": item, "GT": GT_item}
         if self.transform:
+            # Stacking devient (H, W, 2), parfaitement compatible avec ToTensor()
             data = np.stack((item, GT_item), axis=-1)
             transformed_data = self.transform(data)
             output = {"input": transformed_data[0,:,:].unsqueeze(0), "GT": transformed_data[1,:,:].unsqueeze(0), "ipath":path, "gtpath":GT_path}
