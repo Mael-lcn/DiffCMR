@@ -21,18 +21,11 @@ import logging
 import os
 import random
 import sys
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+
 import torchvision.transforms as transforms
-import torchvision.transforms.functional as TF
-from pathlib import Path
-from torch import optim
-from torch.utils.data import DataLoader, random_split
-from tqdm import tqdm
+
+from torch.utils.data import DataLoader
 from CMRxRecon import CMRxReconDataset
-from torch.utils.tensorboard import SummaryWriter
 from time import gmtime, strftime
 current_time = strftime("%m%d_%H_%M", gmtime())
 current_day = strftime("%m%d", gmtime())
