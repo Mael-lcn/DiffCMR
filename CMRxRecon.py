@@ -38,7 +38,7 @@ class CMRxReconDataset(Dataset):
             self.train_pairs = self.train_pairs[:240]
         self.transform = transform
         file_obj.close()
-        
+
 
     def __len__(self):
         return len(self.train_pairs)
