@@ -62,6 +62,7 @@ def create_argparser():
         # --- Chemins et Logs ---
         logdir="./log/flow_t1_08_128/",
         trainpairfile="/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/TrainingSet/pairs.txt",
+        valpairfile="/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/ValidationSet/pairs.txt",
 
         # --- Hyperparamètres généraux ---
         image_size=128,
@@ -145,7 +146,8 @@ def main():
     ])
 
     dataset = CMRxReconDataset(args.trainpairfile, transform=tsfm, length=-1)
-    
+    val_dataset = CMRxReconDataset(args.valpairfile, transform=tsfm, length=-1)
+
     if dist.get_rank() == 0:
         logger.log(f"Taille du jeu d'entraînement : {len(dataset)}")
 
@@ -188,7 +190,7 @@ def main():
         clip_denoised=args.clip_denoised,
         logger=logger,
         image_size=args.image_size,
-        val_dataset=None,
+        val_dataset=val_dataset,
         run_without_test=args.run_without_test,
     ).run_loop(start_print_iter=args.start_print_iter)
 
