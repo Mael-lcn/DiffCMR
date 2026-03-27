@@ -3,13 +3,12 @@ import warnings
 from time import gmtime, strftime
 
 import torch
-import torchvision.transforms as transforms
 import torch.distributed as dist
+import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from improved_diffusion import dist_util, logger
-from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
     model_and_diffusion_defaults,
     create_model_and_diffusion,
@@ -17,21 +16,41 @@ from improved_diffusion.script_util import (
     add_dict_to_argparser,
 )
 from improved_diffusion.train_util import TrainLoop
-from improved_diffusion.utils import set_random_seed, set_random_seed_for_iterations
-import warnings
-warnings.filterwarnings('ignore')
-from torch.utils.data.distributed import DistributedSampler
-
-import argparse
-
-import torchvision.transforms as transforms
-
-from torch.utils.data import DataLoader
 from CMRxRecon import CMRxReconDataset
-from time import gmtime, strftime
+
+warnings.filterwarnings('ignore')
+
 current_time = strftime("%m%d_%H_%M", gmtime())
 current_day = strftime("%m%d", gmtime())
 
+
+
+class LogitNormalSampler:
+    """
+    Échantillonne les pas de temps selon une distribution Logit-Normal.
+    Concentre l'entraînement sur les étapes difficiles (t autour de 0.5) 
+    plutôt que sur le bruit pur ou l'image quasi-parfaite.
+    """
+    def __init__(self, num_timesteps, loc=0.0, scale=1.0):
+        self.num_timesteps = num_timesteps
+        self.loc = loc
+        self.scale = scale
+
+    def sample(self, batch_size, device):
+        # Tirage d'une Gaussienne normale
+        z = torch.randn(batch_size, device=device) * self.scale + self.loc
+
+        # Écrasement avec une Sigmoïde pour obtenir un pourcentage (0 à 1)
+        t_norm = torch.sigmoid(z)
+
+        # Conversion en index entier
+        indices = (t_norm * self.num_timesteps).long()
+        indices = torch.clamp(indices, 0, self.num_timesteps - 1)
+    
+        # Poids uniformes pour le Flow Matching
+        weights = torch.ones(batch_size, device=device)
+
+        return indices, weights
 
 
 def create_argparser():
@@ -41,17 +60,21 @@ def create_argparser():
     """
     defaults = dict(
         # --- Chemins et Logs ---
-        logdir="./log/t1_08_128/",
+        logdir="./log/flow_t1_08_128/",
         trainpairfile="/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/TrainingSet/pairs.txt",
 
-        # --- Hyperparamètres d'entraînement ---
+        # --- Hyperparamètres généraux ---
         image_size=128,
         batch_size=8,
-        lr=1e-5,
-        weight_decay=0.0,
         lr_anneal_steps=0,
         microbatch=-1,
         ema_rate="0.9999",
+
+        # --- Optimisés pour le Flow Matching ---
+        lr=1e-4,
+        weight_decay=1e-4,
+        diffusion_steps=30,
+        schedule_sampler="logit-normal",
 
         # --- Optimisation matérielle ---
         use_fp16=False,
@@ -65,8 +88,7 @@ def create_argparser():
         resume_checkpoint="",
         run_without_test=True,
 
-        # --- Diffusion ---
-        schedule_sampler="uniform",
+        # --- Autres ---
         clip_denoised=False,
     )
 
@@ -74,7 +96,7 @@ def create_argparser():
     # On ajoute les paramètres par défaut du modèle
     final_defaults.update(defaults)
 
-    parser = argparse.ArgumentParser(description="Entraînement Diffusion model")
+    parser = argparse.ArgumentParser(description="Entraînement Flow Matching CMR")
     # On donne final_defaults au parser
     add_dict_to_argparser(parser, final_defaults) 
     return parser
@@ -89,22 +111,30 @@ def main():
         dist_util.GPUS_PER_NODE = torch.cuda.device_count()
     dist_util.setup_dist()
 
-    # SEUL LE RANK 0 EST AUTORISÉ À ACTIVER LE LOGGER COMPLET
     if dist.get_rank() == 0:
         logger.configure(dir=args.logdir, format_strs=["stdout", "log", "csv"])
     else:
-        # Les autres GPUs ne font rien (désactivation silencieuse)
+        # Les autres GPUs ne font rien
         logger.configure(dir=args.logdir, format_strs=[])
 
-    # Création du Modèle et de la Diffusion
-    logger.log("creating model and diffusion...")
+    if dist.get_rank() == 0:
+        logger.log("creating model and flow matching...")
+
     model_args = args_to_dict(args, model_and_diffusion_defaults().keys())
-    print(model_args)
-    
+
+    if dist.get_rank() == 0:
+        print(model_args)
+
     model, diffusion = create_model_and_diffusion(**model_args)
     model.to(dist_util.dev())
-    
-    schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
+
+    if args.schedule_sampler == "logit-normal":
+        if dist.get_rank() == 0:
+            logger.log("Utilisation du Sampler Logit-Normal pour le Flow Matching.")
+        schedule_sampler = LogitNormalSampler(diffusion.num_timesteps)
+    else:
+        from improved_diffusion.resample import create_named_schedule_sampler
+        schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
     # 4. Pipeline de données
     tsfm = transforms.Compose([
@@ -115,12 +145,14 @@ def main():
     ])
 
     dataset = CMRxReconDataset(args.trainpairfile, transform=tsfm, length=-1)
-    logger.log(f"Taille du jeu d'entraînement : {len(dataset)}")
+    
+    if dist.get_rank() == 0:
+        logger.log(f"Taille du jeu d'entraînement : {len(dataset)}")
 
     # Sampler Multi-GPU
     sampler = DistributedSampler(dataset, shuffle=True)
     loader_args = dict(num_workers=args.num_workers, pin_memory=True)
-    
+
     # DataLoader
     train_loader = DataLoader(
         dataset,
@@ -136,7 +168,7 @@ def main():
             
     train_gen = load_gen(train_loader)
 
-    # 5. Boucle d'entraînement
+    # Boucle d'entraînement
     TrainLoop(
         model=model,
         diffusion=diffusion,

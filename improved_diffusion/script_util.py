@@ -2,10 +2,12 @@ import argparse
 import inspect
 
 from . import gaussian_diffusion as gd
+from . import flow_matching as fm
 from .respace import SpacedDiffusion, space_timesteps
 from .unet import SuperResModel, UNetModel
 
 NUM_CLASSES = 1000
+
 
 
 def model_and_diffusion_defaults():
@@ -262,7 +264,7 @@ def sr_create_model(
     )
 
 
-def create_gaussian_diffusion(
+def create_gaussian_diffusion_dif(
     *,
     steps=1000,
     learn_sigma=False,
@@ -299,6 +301,26 @@ def create_gaussian_diffusion(
             else gd.ModelVarType.LEARNED_RANGE
         ),
         loss_type=loss_type,
+        rescale_timesteps=rescale_timesteps,
+    )
+
+def create_gaussian_diffusion(
+    *,
+    steps=1000,
+    learn_sigma=False,
+    sigma_small=False,
+    noise_schedule="linear",
+    use_kl=False,
+    predict_xstart=False,
+    rescale_timesteps=False,
+    rescale_learned_sigmas=False,
+    timestep_respacing="",
+):
+    loss_type = fm.LossType.MSE
+
+    return fm.GaussianDiffusion(
+        loss_type=loss_type,
+        num_timesteps=steps,
         rescale_timesteps=rescale_timesteps,
     )
 
