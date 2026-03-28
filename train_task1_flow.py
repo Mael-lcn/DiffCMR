@@ -84,8 +84,8 @@ def create_argparser():
 
         # --- Fréquence de sauvegarde et Logs ---
         log_interval=500,
-        save_interval=2000,
-        start_print_iter=1000000,
+        save_interval=1000,
+        start_print_iter=1000,
         resume_checkpoint="",
         run_without_test=True,
 
