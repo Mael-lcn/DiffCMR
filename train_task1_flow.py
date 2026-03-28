@@ -146,7 +146,7 @@ def main():
     ])
 
     dataset = CMRxReconDataset(args.trainpairfile, transform=tsfm, length=-1)
-    val_dataset = CMRxReconDataset(args.valpairfile, transform=tsfm, length=-1)
+    val_dataset = CMRxReconDataset(args.valpairfile, transform=tsfm, length=-1, limit_val=True)
 
     if dist.get_rank() == 0:
         logger.log(f"Taille du jeu d'entraînement : {len(dataset)}")

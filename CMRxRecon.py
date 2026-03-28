@@ -25,6 +25,10 @@ class CMRxReconDataset(Dataset):
                                        "AccFactor08":"kspace_single_sub08",
                                        "AccFactor10":"kspace_single_sub10",
                                        "FullSample":"kspace_single_full"}}
+
+        self.mean = 0.5
+        self.std = 0.5
+
         self.file_path = file_path
         file_obj = open(self.file_path, "r")
         self.train_pairs = file_obj.readlines()
@@ -32,7 +36,7 @@ class CMRxReconDataset(Dataset):
             self.train_pairs = self.train_pairs[:length]
         if limit_val:
             random.Random(666).shuffle(self.train_pairs)
-            self.train_pairs = self.train_pairs[:240]
+            self.train_pairs = self.train_pairs[:32]
         self.transform = transform
         file_obj.close()
 

@@ -328,7 +328,7 @@ def sampling_major_vote_func(diffusion_model, ddp_model, output_folder, dataset,
                     os.path.join(output_folder, f"{name[i]}_condition_on.png")
                 )
 
-            if isinstance(dataset, None):
+            if dataset is None:
                 _, _, W, H = former_frame_for_feature_extraction.shape
                 kernel_size = dataset.image_size
                 stride = 256
