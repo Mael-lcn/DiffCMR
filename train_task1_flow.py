@@ -91,6 +91,7 @@ def create_argparser():
 
         # --- Autres ---
         clip_denoised=False,
+        model_type="flow_matching"
     )
 
     final_defaults = model_and_diffusion_defaults()
@@ -141,6 +142,7 @@ def main():
     tsfm = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize((args.image_size, args.image_size)),
+        transforms.Normalize(mean=[0.5, 0.5], std=[0.5, 0.5]),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
     ])

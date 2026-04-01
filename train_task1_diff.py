@@ -1,5 +1,3 @@
-import argparse
-import warnings
 from time import gmtime, strftime
 
 import torch
@@ -17,16 +15,11 @@ from improved_diffusion.script_util import (
     add_dict_to_argparser,
 )
 from improved_diffusion.train_util import TrainLoop
-from improved_diffusion.utils import set_random_seed, set_random_seed_for_iterations
 import warnings
 warnings.filterwarnings('ignore')
-from torch.utils.data.distributed import DistributedSampler
 
 import argparse
 
-import torchvision.transforms as transforms
-
-from torch.utils.data import DataLoader
 from CMRxRecon import CMRxReconDataset
 from time import gmtime, strftime
 current_time = strftime("%m%d_%H_%M", gmtime())
@@ -43,6 +36,7 @@ def create_argparser():
         # --- Chemins et Logs ---
         logdir="./log/t1_08_128/",
         trainpairfile="/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/TrainingSet/pairs.txt",
+        valpairfile="/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/ValidationSet/pairs.txt",
 
         # --- Hyperparamètres d'entraînement ---
         image_size=128,
@@ -68,6 +62,7 @@ def create_argparser():
         # --- Diffusion ---
         schedule_sampler="uniform",
         clip_denoised=False,
+        model_type="diffusion"
     )
 
     final_defaults = model_and_diffusion_defaults()
@@ -110,11 +105,13 @@ def main():
     tsfm = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize((args.image_size, args.image_size)),
+        transforms.Normalize(mean=[0.5, 0.5], std=[0.5, 0.5]),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
     ])
 
     dataset = CMRxReconDataset(args.trainpairfile, transform=tsfm, length=-1)
+    val_dataset = CMRxReconDataset(args.valpairfile, transform=tsfm, length=-1, limit_val=True)
     logger.log(f"Taille du jeu d'entraînement : {len(dataset)}")
 
     # Sampler Multi-GPU
@@ -156,7 +153,7 @@ def main():
         clip_denoised=args.clip_denoised,
         logger=logger,
         image_size=args.image_size,
-        val_dataset=None,
+        val_dataset=val_dataset,
         run_without_test=args.run_without_test,
     ).run_loop(start_print_iter=args.start_print_iter)
 

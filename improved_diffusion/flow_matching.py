@@ -228,7 +228,7 @@ class GaussianDiffusion:
             assert model_output.shape == target.shape == x_start.shape
             terms["mse"] = mean_flat((target - model_output) ** 2)
             terms["sum"] = (target - model_output).pow(2).sum(dim=(1, 2, 3))
-            terms["loss"] = terms["sum"]
+            terms["loss"] = terms["mse"]
         else:
             raise NotImplementedError(self.loss_type)
 

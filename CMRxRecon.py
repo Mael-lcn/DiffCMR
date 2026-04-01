@@ -1,72 +1,6 @@
 """
 To generate img data from the raw mat file
 """
-import numpy as np
-from torch.utils.data import Dataset
-from torchvision import transforms
-from torchvision import utils
-SCALE = 100000
-import random
-
-
-
-class CMRxReconDataset(Dataset):
-    
-    def __init__(self, file_path, transform=None, length=-1, limit_val=False):
-        """
-        root_dir: absolute path of "ChallengData"
-        file_path: the train_pair_file.txt
-        """
-        self.name_dict = {"MultiCoil":{"AccFactor04":"kspace_sub04",
-                                       "AccFactor08":"kspace_sub08",
-                                       "AccFactor10":"kspace_sub10",
-                                       "FullSample":"kspace_full"}, 
-                          "SingleCoil":{"AccFactor04":"kspace_single_sub04",
-                                       "AccFactor08":"kspace_single_sub08",
-                                       "AccFactor10":"kspace_single_sub10",
-                                       "FullSample":"kspace_single_full"}}
-
-        self.mean = 0.5
-        self.std = 0.5
-
-        self.file_path = file_path
-        file_obj = open(self.file_path, "r")
-        self.train_pairs = file_obj.readlines()
-        if length>0 and not limit_val:
-            self.train_pairs = self.train_pairs[:length]
-        if limit_val:
-            random.Random(666).shuffle(self.train_pairs)
-            self.train_pairs = self.train_pairs[:32]
-        self.transform = transform
-        file_obj.close()
-
-
-    def __len__(self):
-        return len(self.train_pairs)
-    
-    def __getitem__(self, index):
-        path, GT_path = self.train_pairs[index].replace("\n","").split(" ")
-        
-        # Chargement des volumes complets (Frames, H, W)
-        item_full = np.float32(np.load(path))
-        GT_item_full = np.float32(np.load(GT_path))
-
-        num_frames = item_full.shape[0]
-        random_frame_idx = random.randint(0, num_frames - 1)
-
-        # On extrait la frame aléatoire pour obtenir une image 2D (H, W)
-        item = item_full[random_frame_idx]
-        GT_item = GT_item_full[random_frame_idx]
-
-        output = {"input": item, "GT": GT_item}
-        if self.transform:
-            # Stacking devient (H, W, 2), parfaitement compatible avec ToTensor()
-            data = np.stack((item, GT_item), axis=-1)
-            transformed_data = self.transform(data)
-            output = {"input": transformed_data[0,:,:].unsqueeze(0), "GT": transformed_data[1,:,:].unsqueeze(0), "ipath":path, "gtpath":GT_path}
-        return output
-
-
 import os
 import random
 import numpy as np
@@ -74,6 +8,9 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 import torchvision.utils as utils
+SCALE = 100000
+
+
 
 class CMRxReconDataset(Dataset):
     def __init__(self, file_path, transform=None, length=-1, limit_val=False):
@@ -81,7 +18,6 @@ class CMRxReconDataset(Dataset):
         self.mean = 0.5
         self.std = 0.5
 
-        # 1. Lecture du fichier texte
         with open(file_path, "r") as f:
             train_pairs_lines = f.readlines()
         
@@ -91,27 +27,26 @@ class CMRxReconDataset(Dataset):
             random.Random(666).shuffle(train_pairs_lines)
             train_pairs_lines = train_pairs_lines[:24]
 
-        # 2. APLATISSEMENT DU DATASET (1 item = 1 frame)
+        #  On crée une liste de pointeurs vers chaque frame
         self.all_slices = []
-        print(f"Scan des volumes dans {file_path.split('/')[-1]}...")
+        print(f"Indexation des volumes dans {file_path.split('/')[-1]}...")
         
         for line in train_pairs_lines:
             parts = line.strip().split(" ")
-            if len(parts) < 2:
-                continue
+            if len(parts) < 2: continue
             path, gt_path = parts[0], parts[1]
             
             try:
-                # mmap_mode='r' lit juste l'en-tête pour avoir la shape sans charger la RAM
+                # On utilise mmap_mode pour obtenir la forme sans charger le fichier
                 vol_shape = np.load(path, mmap_mode='r').shape
                 num_frames = vol_shape[0]
                 
                 for frame_idx in range(num_frames):
                     self.all_slices.append((path, gt_path, frame_idx))
             except Exception as e:
-                print(f"Attention, erreur de lecture sur {path}: {e}")
+                print(f"Erreur d'indexation sur {path}: {e}")
         
-        print(f"Dataset prêt : {len(self.all_slices)} images 2D (frames) au total.")
+        print(f"Dataset prêt : {len(self.all_slices)} frames au total.")
 
     def __len__(self):
         return len(self.all_slices)
@@ -119,25 +54,30 @@ class CMRxReconDataset(Dataset):
     def __getitem__(self, index):
         path, GT_path, frame_idx = self.all_slices[index]
 
-        item_full = np.float32(np.load(path))
-        GT_item_full = np.float32(np.load(GT_path))
+        # --- CORRECTION MMAP : Très important pour Jean Zay ---
+        item_full = np.load(path, mmap_mode='r')
+        GT_item_full = np.load(GT_path, mmap_mode='r')
         
-        item = item_full[frame_idx]
-        GT_item = GT_item_full[frame_idx]
+        # On ne convertit en float32 que la frame extraite
+        item = np.array(item_full[frame_idx], dtype=np.float32)
+        GT_item = np.array(GT_item_full[frame_idx], dtype=np.float32)
 
         if self.transform:
-            data = np.stack((item, GT_item), axis=-1)
-            transformed_data = self.transform(data)
+            # On empile pour que ToTensor() traite les deux images de la même façon
+            data = np.stack((item, GT_item), axis=-1) # (H, W, 2)
+            transformed_data = self.transform(data)     # Devient (2, H, W)
+
+            # Extraction des canaux (C, H, W)
             output = {
-                "input": transformed_data[0,:,:].unsqueeze(0), 
-                "GT": transformed_data[1,:,:].unsqueeze(0), 
+                "input": transformed_data[0:1, :, :], # Canal 0
+                "GT": transformed_data[1:2, :, :],    # Canal 1
                 "ipath": path, 
                 "gtpath": GT_path
             }
         else:
             output = {
-                "input": torch.tensor(item).unsqueeze(0), 
-                "GT": torch.tensor(GT_item).unsqueeze(0), 
+                "input": torch.from_numpy(item).unsqueeze(0), 
+                "GT": torch.from_numpy(GT_item).unsqueeze(0), 
                 "ipath": path, 
                 "gtpath": GT_path
             }
@@ -145,19 +85,19 @@ class CMRxReconDataset(Dataset):
         return output
 
 
+
 if __name__ == "__main__":
     print("\n--- Lancement du test local ---")
 
-    # Intégration du fameux Crop Central suivi du Resize !
     tsfm = transforms.Compose([
         transforms.ToTensor(),
         transforms.CenterCrop(256),                  # On zoome sur le coeur
         transforms.Resize((64, 64), antialias=True), # On réduit à la taille de ton modèle
+        transforms.Normalize(mean=[0.5, 0.5], std=[0.5, 0.5]),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
     ])
 
-    # J'ai remplacé le chemin de txiang par ton chemin sur Jean Zay
     test_file = "/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/TrainingSet/pairs.txt"
 
     if os.path.exists(test_file):

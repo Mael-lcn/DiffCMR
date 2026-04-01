@@ -67,6 +67,7 @@ def create_model_and_diffusion(
     use_checkpoint,
     use_scale_shift_norm,
     seed,
+    model_type
 ):
     _ = seed  # hack to prevent unused variable
     _ = expansion
@@ -86,17 +87,37 @@ def create_model_and_diffusion(
         rrdb_blocks=rrdb_blocks,
         deeper_net=deeper_net
     )
-    diffusion = create_gaussian_diffusion(
-        steps=diffusion_steps,
-        learn_sigma=learn_sigma,
-        sigma_small=sigma_small,
-        noise_schedule=noise_schedule,
-        use_kl=use_kl,
-        predict_xstart=predict_xstart,
-        rescale_timesteps=rescale_timesteps,
-        rescale_learned_sigmas=rescale_learned_sigmas,
-        timestep_respacing=timestep_respacing,
-    )
+
+    if model_type == "diffusion":
+        print("Initialisation : Mode DIFFUSION (Gaussian Diffusion)")
+        diffusion = create_gaussian_diffusion_dif(
+            steps=diffusion_steps,
+            learn_sigma=learn_sigma,
+            sigma_small=sigma_small,
+            noise_schedule=noise_schedule,
+            use_kl=use_kl,
+            predict_xstart=predict_xstart,
+            rescale_timesteps=rescale_timesteps,
+            rescale_learned_sigmas=rescale_learned_sigmas,
+            timestep_respacing=timestep_respacing,
+        )
+
+    elif model_type == "flow_matching":
+        print("Initialisation : Mode FLOW MATCHING")
+        diffusion = create_gaussian_diffusion(
+            steps=diffusion_steps,
+            learn_sigma=learn_sigma,
+            sigma_small=sigma_small,
+            noise_schedule=noise_schedule,
+            use_kl=use_kl,
+            predict_xstart=predict_xstart,
+            rescale_timesteps=rescale_timesteps,
+            rescale_learned_sigmas=rescale_learned_sigmas,
+            timestep_respacing=timestep_respacing,
+        )
+    else:
+        raise ValueError(f"Méthode {model_type} non reconnue !")
+
     return model, diffusion
 
 
