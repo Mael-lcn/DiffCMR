@@ -1,73 +1,79 @@
 import os
-
-################################################
-os.environ["CUDA_VISIBLE_DEVICES"] = "6"
-result_dir = "./results/ablation_step_50/"
-model_path = "/home/txiang/CMRxRecon/DiffCMR/checkpoints/t1_04_128_model120000.pt"
-# val_pair_file = "/home/txiang/CMRxRecon/CMRxRecon_Repo/dataset/train_pair_file/Task2_acc_10_val_pair_file_npy_clean.txt"
-val_pair_file = "/home/txiang/CMRxRecon/CMRxRecon_Repo/dataset/train_pair_file_task1/AccFactor04_rMax_512_validation_pair.txt"
-val_bs = 24
-################################################
+import argparse
+import warnings
+import torchvision.transforms as transforms
+from time import gmtime, strftime
 
 from improved_diffusion import dist_util, logger
-# from datasets.city import load_data, create_dataset
-from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
     model_and_diffusion_defaults,
     create_model_and_diffusion,
-    args_to_dict,
-    add_dict_to_argparser,
 )
-from improved_diffusion.train_util import TrainLoop
-from improved_diffusion.utils import set_random_seed, set_random_seed_for_iterations
-import warnings
+from CMRxRecon import CMRxReconDataset
+# Import de la bonne fonction d'inférence
+from improved_diffusion.sampling_util import CMR_sampling_major_vote_func
+
 warnings.filterwarnings('ignore')
 
-import argparse
-import logging
-import os
-import random
-import sys
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as transforms
-import torchvision.transforms.functional as TF
-from pathlib import Path
-from torch import optim
-from torch.utils.data import DataLoader, random_split, Subset
-from tqdm import tqdm
-from CMRxRecon import CMRxReconDataset
-from torch.utils.tensorboard import SummaryWriter
-from time import gmtime, strftime
-current_time = strftime("%m%d_%H_%M", gmtime())
-current_day = strftime("%m%d", gmtime())
 
 
-#inference check
-from improved_diffusion.sampling_util import CMR_sampling_major_vote_func, CMR_GTINPUT_sampling_major_vote_func
-dist_util.setup_dist()
-logger.configure(dir=result_dir)
-arg_dict = model_and_diffusion_defaults()
+def main():
+    # ==========================================
+    # CONFIGURATION
+    # ==========================================
+    result_dir = "./results/flow_eval/"
+    model_path = "/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/log/flow/logs_run1/model44000.pt"
+    val_pair_file = "/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/ValidationSet/pairs.txt"
+    val_bs = 8  # Taille de batch par GPU
+    diffusion_steps = 30   # Le NFE de ton Flow Matching 100 pour diff !
+    vote_num = 1    # 1 pour ODE deterministe sinon 4 pour diffusion !!!
 
-arg_dict["image_size"]=128
-arg_dict["diffusion_steps"]=50
-print(arg_dict)
-model, diffusion = create_model_and_diffusion(**arg_dict)
-model.load_state_dict(
-        dist_util.load_state_dict(model_path, map_location="cpu")
+    # Initialisation Multi-GPU
+    dist_util.setup_dist()
+
+    # Seul le rank 0 a le droit d'écrire les logs pour éviter les doublons
+    if dist_util.get_rank() == 0:
+        os.makedirs(result_dir, exist_ok=True)
+        logger.configure(dir=result_dir, format_strs=["stdout", "log", "csv"])
+    else:
+        logger.configure(dir=result_dir, format_strs=[])
+
+    arg_dict = model_and_diffusion_defaults()
+    arg_dict["image_size"] = 128
+    arg_dict["diffusion_steps"] = diffusion_steps
+
+    if dist_util.get_rank() == 0:
+        logger.log(f"Création du modèle (Steps: {diffusion_steps})...")
+        
+    model, diffusion = create_model_and_diffusion(**arg_dict)
+
+    # Chargement des poids depuis le checkpoint
+    model.load_state_dict(dist_util.load_state_dict(model_path, map_location="cpu"))
+    model.to(dist_util.dev())
+    model.eval()
+
+    tsfm = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Resize((128, 128))
+    ])
+
+    # Chargement du dataset complet (limit_val=False pour la vraie évaluation)
+    dataset = CMRxReconDataset(val_pair_file, transform=tsfm, length=-1, limit_val=False)
+
+    if dist_util.get_rank() == 0:
+        logger.log("Lancement de l'inférence et de l'évaluation...")
+
+    # Lancement de l'inférence
+    CMR_sampling_major_vote_func(
+        batch_size=val_bs, 
+        diffusion=diffusion, 
+        model=model, 
+        output_folder=result_dir, 
+        dataset=dataset, 
+        logger=logger, 
+        is_inference=True, 
+        vote_num=vote_num 
     )
-logger.log("creating model and diffusion...")
-model.to(dist_util.dev())
-model.eval()
 
-tsfm = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Resize((128,128))
-])
-dataset = CMRxReconDataset(val_pair_file, transform=tsfm, limit_val=True)
-
-CMR_sampling_major_vote_func(val_bs, diffusion, model, result_dir, dataset, logger, True, vote_num=4)
-
-# CMR_GTINPUT_sampling_major_vote_func(val_bs, diffusion, model, result_dir, dataset, logger, True, vote_num=4)
+if __name__ == "__main__":
+    main()

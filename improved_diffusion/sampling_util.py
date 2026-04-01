@@ -1,6 +1,6 @@
 import math
 import os
-
+import time
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -17,6 +17,10 @@ from .metrics import FBound_metric, WCov_metric
 # from datasets.monu import MonuDataset
 from .utils import set_random_seed_for_iterations
 from .Evaluation import ssim, mse, nmse, psnr
+from torch.utils.data.distributed import DistributedSampler
+from .Evaluation import psnr, ssim, nmse
+
+
 
 cityspallete = [
     0, 0, 0,
@@ -50,155 +54,121 @@ def calculate_metrics(x, gt):
 
 
 
-def CMR_sampling_major_vote_func(batch_size, diffusion_model, ddp_model, output_folder, dataset, logger, clip_denoised, vote_num=4):
-    ddp_model.eval()
-    batch_size = batch_size
-    major_vote_number = vote_num
-    loader = DataLoader(dataset, batch_size=batch_size, drop_last=True)
-    loader_iter = iter(loader)
-    os.makedirs(output_folder, exist_ok=True)
-    n_rounds = len(loader)
+def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, dataset, logger, is_inference=False, vote_num=1):
+    # Configuration du Dataloader Multi-GPU
+    sampler = DistributedSampler(dataset, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=2, drop_last=False)
+    
+    # --- NOUVEAU : Listes pour nos métriques scientifiques ---
+    psnr_list, ssim_list, nmse_list, time_list = [], [], [], []
 
-    f1_score_list = []
-    miou_list = []
-    fbound_list = []
-    wcov_list = []
+    model.eval()
+    
+    for b, batch in enumerate(dataloader):
+        condition_on = batch["input"].to(dist_util.dev())
+        GT = batch["GT"].to(dist_util.dev())
 
-    ssim_list, mse_list, nmse_list, psnr_list = [],[],[],[]
+        # Préparation de l'entrée pour le modèle (concaténation condition + bruit)
+        shape = (condition_on.shape[0], 1, condition_on.shape[2], condition_on.shape[3])
 
-    with torch.no_grad():
-        for round_index in range(n_rounds):
-            print(f"Current Round: {round_index+1} / Total Round: {n_rounds}")
-            data_ = next(loader_iter)
-            gt_mask = data_["GT"]
-            condition_on = {"conditioned_image": data_["input"]}
-            name = data_["ipath"]
-            
-            name = [n.split("/")[-5]+"_"+n.split("/")[-1].split(".")[0] for n in name]
-            condition_on = condition_on["conditioned_image"]
-            former_frame_for_feature_extraction = condition_on.to(dist_util.dev())
+        # Chronométrage de l'inférence
+        start_time = time.time()
 
-            for i in range(gt_mask.shape[0]):
-                gt_img = Image.fromarray((gt_mask[i][0].detach().cpu().numpy())*255)
-                gt_img.convert("L").save(
-                    os.path.join(output_folder, f"{name[i]}_gt.png"))
+        # Pour le Flow Matching, un seul passage suffit. Si vote_num > 1, on ferait une moyenne.
+        final_sample = torch.zeros_like(condition_on)
+        for _ in range(vote_num):
+            noise = torch.randn_like(condition_on)
+            # Adapte cette ligne si ton modèle prend la condition via model_kwargs
+            model_kwargs = {} 
+            # model_kwargs = {"context": condition_on} # (Dé-commente si ton code l'exige)
 
-            for i in range(condition_on.shape[0]):
-                # denorm_condition_on = denormalize(condition_on.clone(), mean=dataset.mean, std=dataset.std)
-                in_img = Image.fromarray((condition_on[i][0].detach().cpu().numpy())*255)
-                in_img.convert("L").save(
-                    os.path.join(output_folder, f"{name[i]}_input.png"))
-                # denorm_condition_on = condition_on.clone()
-                # tvu.save_image(
-                #     denorm_condition_on[i,] / 1.,
-                #     os.path.join(output_folder, f"{name[i]}_condition_on.png")
-                # )
-
-            
-            model_kwargs = {
-                "conditioned_image": torch.cat([former_frame_for_feature_extraction] * major_vote_number)}
-
-            x = diffusion_model.p_sample_loop(
-                ddp_model,
-                (major_vote_number*batch_size, gt_mask.shape[1], former_frame_for_feature_extraction.shape[2],
-                    former_frame_for_feature_extraction.shape[3]),
-                progress=True,
-                clip_denoised=clip_denoised,
+            sample = diffusion.p_sample_loop(
+                model,
+                shape=shape,
+                noise=noise,
+                clip_denoised=True,
                 model_kwargs=model_kwargs
             )
+            final_sample += sample
+        final_sample = final_sample / vote_num
 
-            # x = (x + 1.0) / 2.0
+        end_time = time.time()
+        inference_time = (end_time - start_time) / condition_on.shape[0] # Temps par image
+        
+        final_sample = (final_sample + 1.0) / 2.0
+        final_sample = torch.clamp(final_sample, 0.0, 1.0)
+        
+        GT = (GT + 1.0) / 2.0
+        GT = torch.clamp(GT, 0.0, 1.0)
+        
+        condition_on = (condition_on + 1.0) / 2.0
+        condition_on = torch.clamp(condition_on, 0.0, 1.0)
 
-            # if x.shape[2] != gt_mask.shape[2] or x.shape[3] != gt_mask.shape[3]:
-            #     x = F.interpolate(x, gt_mask.shape[2:], mode='bilinear')
+        # Sauvegarde des images
+        if b == 0 and dist_util.get_rank() == 0:
+            os.makedirs(output_folder, exist_ok=True)
+            for img_idx in range(min(4, final_sample.shape[0])): # Sauvegarde 4 images du premier batch
+                tvu.save_image(final_sample[img_idx], os.path.join(output_folder, f"recon_b{b}_i{img_idx}.png"), normalize=True)
+                tvu.save_image(GT[img_idx], os.path.join(output_folder, f"gt_b{b}_i{img_idx}.png"), normalize=True)
+                tvu.save_image(condition_on[img_idx], os.path.join(output_folder, f"input_b{b}_i{img_idx}.png"), normalize=True)
 
-            # x = torch.clamp(x, 0.0, 1.0)
+        # Calcul des métriques du Challenge
+        pred_np = final_sample.squeeze(1).cpu().numpy()
+        gt_np = GT.squeeze(1).cpu().numpy()
 
-            # major vote result
-            # x = x.mean(dim=0, keepdim=True)
-            x_list = torch.split(x, batch_size)
-            tt = torch.stack(x_list)
-            x = tt.mean(dim=0)
-            # for tt in x_list:
-            #     tt = tt.mean(dim=0, keepdim=True)
-            # x = torch.cat(x_list)
+        for i in range(pred_np.shape[0]):
+            gt_3d = np.expand_dims(gt_np[i], axis=0)
+            pred_3d = np.expand_dims(pred_np[i], axis=0)
+            
+            val_psnr = psnr(gt_np[i], pred_np[i])
+            val_ssim = ssim(gt_3d, pred_3d)[0]
+            val_nmse = nmse(gt_np[i], pred_np[i])
+            
+            psnr_list.append(val_psnr)
+            ssim_list.append(val_ssim)
+            nmse_list.append(val_nmse)
+            time_list.append(inference_time)
 
-            for i in range(x.shape[0]):
-                # save as outer training ids
-                # current_output = x[i][0] + 1
-                # current_output[current_output == current_output.max()] = 0
-                # out_img = Image.fromarray(x[i][0].detach().cpu().numpy().astype('uint8'))
-                # out_img.putpalette(cityspallete)
-                # out_img.save(
-                #     os.path.join(output_folder, f"{name[i]}_model_output_palette.png"))
-                out_img = Image.fromarray((x[i][0].detach().cpu().numpy())*255)
-                out_img.convert("L").save(
-                    os.path.join(output_folder, f"{name[i]}_model_output.png"))
+    # Récupération des scores de tous les GPUs
+    device = dist_util.dev()
+    local_psnr = torch.tensor(psnr_list, device=device)
+    local_ssim = torch.tensor(ssim_list, device=device)
+    local_nmse = torch.tensor(nmse_list, device=device)
+    local_time = torch.tensor(time_list, device=device)
 
-            for index, (gt_im, out_im) in enumerate(zip(gt_mask, x)):
-                gt_im = gt_im.cpu().squeeze(1).detach().numpy()
-                out_im = out_im.cpu().squeeze(1).detach().numpy()
-                # H, W = gt_im.shape[-2], gt_im.shape[-1]
-                # gt_im = gt_im[:, H//4:H//4*3, W//3:W//3*2]
-                # out_im = out_im[:, H//4:H//4*3, W//3:W//3*2]
-                psnr_ = psnr(gt_im, out_im)
-                mse_ = mse(gt_im, out_im)
-                nmse_ = nmse(gt_im, out_im)
-                ssim_ = ssim(gt_im, out_im)
-                psnr_list.append(psnr_)
-                mse_list.append(mse_)
-                nmse_list.append(nmse_)
-                ssim_list.append(ssim_)
-                # f1, miou, wcov, fbound = calculate_metrics(out_im[0], gt_im[0])
-                # f1_score_list.append(f1)
-                # miou_list.append(miou)
-                # wcov_list.append(wcov)
-                # fbound_list.append(fbound)
+    # Création des listes pour recevoir les données des autres GPUs
+    gathered_psnr = [torch.zeros_like(local_psnr) for _ in range(dist.get_world_size())]
+    gathered_ssim = [torch.zeros_like(local_ssim) for _ in range(dist.get_world_size())]
+    gathered_nmse = [torch.zeros_like(local_nmse) for _ in range(dist.get_world_size())]
+    gathered_time = [torch.zeros_like(local_time) for _ in range(dist.get_world_size())]
+    
+    dist.all_gather(gathered_psnr, local_psnr)
+    dist.all_gather(gathered_ssim, local_ssim)
+    dist.all_gather(gathered_nmse, local_nmse)
+    dist.all_gather(gathered_time, local_time)
 
-                logger.info(
-                    f"{name[index]} psnr {psnr_list[-1]}, ssim {ssim_list[-1]}, mse {mse_list[-1]}, nmse {nmse_list[-1]}")
-
-    my_length = len(psnr_list)
-    length_of_data = torch.tensor(len(psnr_list), device=dist_util.dev())
-    gathered_length_of_data = [torch.tensor(1, device=dist_util.dev()) for _ in range(dist.get_world_size())]
-    dist.all_gather(gathered_length_of_data, length_of_data)
-    max_len = torch.max(torch.stack(gathered_length_of_data))
-
-    ssim_list = [i.item() for i in ssim_list]
-    nmse_list = [i.item() for i in nmse_list]
-
-    psnr_tensor = torch.tensor(psnr_list + [torch.tensor(-1)] * (max_len - my_length), device=dist_util.dev())
-    ssim_tensor = torch.tensor(ssim_list + [torch.tensor(-1)] * (max_len - my_length), device=dist_util.dev())
-    mse_tensor = torch.tensor(mse_list + [torch.tensor(-1)] * (max_len - my_length), device=dist_util.dev())
-    nmse_tensor = torch.tensor(nmse_list + [torch.tensor(-1)] * (max_len - my_length), device=dist_util.dev())
-    gathered_psnr = [torch.ones_like(psnr_tensor) * -1 for _ in range(dist.get_world_size())]
-    gathered_ssim = [torch.ones_like(ssim_tensor) * -1 for _ in range(dist.get_world_size())]
-    gathered_mse = [torch.ones_like(mse_tensor) * -1 for _ in range(dist.get_world_size())]
-    gathered_nmse = [torch.ones_like(nmse_tensor) * -1 for _ in range(dist.get_world_size())]
-
-    dist.all_gather(gathered_psnr, psnr_tensor)
-    dist.all_gather(gathered_ssim, ssim_tensor)
-    dist.all_gather(gathered_mse, mse_tensor)
-    dist.all_gather(gathered_nmse, nmse_tensor)
-
-    # if dist.get_rank() == 0:
-    logger.info("measure total avg")
-    gathered_psnr = torch.cat(gathered_psnr)
-    # gathered_psnr = gathered_psnr[gathered_psnr != -1]
-    logger.info(f"mean psnr {gathered_psnr.mean()}")
-
-    gathered_ssim = torch.cat(gathered_ssim)
-    # gathered_f1 = gathered_f1[gathered_f1 != -1]
-    logger.info(f"mean ssim {gathered_ssim.mean()}")
-    gathered_mse = torch.cat(gathered_mse)
-    # gathered_wcov = gathered_wcov[gathered_wcov != -1]
-    logger.info(f"mean mse {gathered_mse.mean()}")
-    gathered_nmse = torch.cat(gathered_nmse)
-    # gathered_boundf = gathered_boundf[gathered_boundf != -1]
-    logger.info(f"mean nmse {gathered_nmse.mean()}")
-
-    dist.barrier()
-    return gathered_psnr.mean().item(), gathered_ssim.mean().item(), gathered_nmse.mean().item()
+    # Le GPU 0 calcule la moyenne finale et écrit les logs
+    if dist_util.get_rank() == 0:
+        total_psnr = torch.cat(gathered_psnr).mean().item()
+        total_ssim = torch.cat(gathered_ssim).mean().item()
+        total_nmse = torch.cat(gathered_nmse).mean().item()
+        total_time = torch.cat(gathered_time).mean().item()
+        
+        logger.log("\n" + "="*40)
+        logger.log("=== RÉSULTATS MÉTRIQUES (TEST COMPLET) ===")
+        logger.log("="*40)
+        logger.log(f"PSNR Moyen        : {total_psnr:.4f} dB")
+        logger.log(f"SSIM Moyen        : {total_ssim:.4f}")
+        logger.log(f"NMSE Moyen        : {total_nmse:.6f}")
+        logger.log(f"Temps par Image   : {total_time:.4f} secondes")
+        logger.log("="*40 + "\n")
+        
+        logger.logkv("test_psnr", total_psnr)
+        logger.logkv("test_ssim", total_ssim)
+        logger.logkv("test_nmse", total_nmse)
+        logger.logkv("test_time_per_img", total_time)
+        
+    return
 
 
 def CMR_GTINPUT_sampling_major_vote_func(batch_size, diffusion_model, ddp_model, output_folder, dataset, logger, clip_denoised, vote_num=4):
