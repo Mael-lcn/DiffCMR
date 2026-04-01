@@ -118,7 +118,7 @@ class CMRxReconDataset(Dataset):
 
     def __getitem__(self, index):
         path, GT_path, frame_idx = self.all_slices[index]
-        
+
         item_full = np.float32(np.load(path))
         GT_item_full = np.float32(np.load(GT_path))
         
@@ -144,9 +144,7 @@ class CMRxReconDataset(Dataset):
             
         return output
 
-# ==========================================
-# TEST LOCAL DU DATASET
-# ==========================================
+
 if __name__ == "__main__":
     print("\n--- Lancement du test local ---")
 
