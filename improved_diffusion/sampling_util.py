@@ -79,8 +79,8 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
         for _ in range(vote_num):
             noise = torch.randn_like(condition_on)
             # Adapte cette ligne si ton modèle prend la condition via model_kwargs
-            model_kwargs = {} 
-            # model_kwargs = {"context": condition_on} # (Dé-commente si ton code l'exige)
+            #model_kwargs = {} 
+            model_kwargs = {"conditioned_image": condition_on} # (Dé-commente si ton code l'exige)
 
             sample = diffusion.p_sample_loop(
                 model,
@@ -105,7 +105,7 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
         condition_on = torch.clamp(condition_on, 0.0, 1.0)
 
         # Sauvegarde des images
-        if b == 0 and dist_util.get_rank() == 0:
+        if b == 0 and dist.get_rank() == 0:
             os.makedirs(output_folder, exist_ok=True)
             for img_idx in range(min(4, final_sample.shape[0])): # Sauvegarde 4 images du premier batch
                 tvu.save_image(final_sample[img_idx], os.path.join(output_folder, f"recon_b{b}_i{img_idx}.png"), normalize=True)
@@ -119,11 +119,11 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
         for i in range(pred_np.shape[0]):
             gt_3d = np.expand_dims(gt_np[i], axis=0)
             pred_3d = np.expand_dims(pred_np[i], axis=0)
-            
-            val_psnr = psnr(gt_np[i], pred_np[i])
-            val_ssim = ssim(gt_3d, pred_3d)[0]
-            val_nmse = nmse(gt_np[i], pred_np[i])
-            
+
+            val_psnr = psnr(gt_np[i], pred_np[i]).item()
+            val_ssim = ssim(gt_3d, pred_3d)[0].item()
+            val_nmse = nmse(gt_np[i], pred_np[i]).item()
+
             psnr_list.append(val_psnr)
             ssim_list.append(val_ssim)
             nmse_list.append(val_nmse)
@@ -148,7 +148,7 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
     dist.all_gather(gathered_time, local_time)
 
     # Le GPU 0 calcule la moyenne finale et écrit les logs
-    if dist_util.get_rank() == 0:
+    if dist.get_rank() == 0:
         total_psnr = torch.cat(gathered_psnr).mean().item()
         total_ssim = torch.cat(gathered_ssim).mean().item()
         total_nmse = torch.cat(gathered_nmse).mean().item()
@@ -167,7 +167,7 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
         logger.logkv("test_ssim", total_ssim)
         logger.logkv("test_nmse", total_nmse)
         logger.logkv("test_time_per_img", total_time)
-        
+
     return
 
 

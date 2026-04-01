@@ -31,11 +31,11 @@ def create_argparser():
         val_pair_file="/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/ValidationSet/pairs.txt",
         result_dir="/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/log/flow/eval/",
 
-        # --- Hyperparamètres d'Inférence ---
         image_size=128,
+        diffusion_steps=100,
+
         batch_size=8,
-        diffusion_steps=30, # NFE pour Flow Matching (mettre 100+ pour Diffusion)
-        vote_num=1,         # 1 pour Flow Matching (déterministe), 4 pour Diffusion
+        vote_num=4,
         num_workers=4,
     )
 

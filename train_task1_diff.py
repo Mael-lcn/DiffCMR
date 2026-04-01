@@ -100,10 +100,10 @@ def main():
     logger.log("creating model and diffusion...")
     model_args = args_to_dict(args, model_and_diffusion_defaults().keys())
     print(model_args)
-    
+
     model, diffusion = create_model_and_diffusion(**model_args)
     model.to(dist_util.dev())
-    
+
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
     # 4. Pipeline de données
