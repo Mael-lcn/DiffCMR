@@ -127,6 +127,8 @@ def main():
     if dist.get_rank() == 0:
         print(model_args)
 
+    model_args["model_type"] = args.model_type
+
     model, diffusion = create_model_and_diffusion(**model_args)
     model.to(dist_util.dev())
 

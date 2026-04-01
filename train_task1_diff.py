@@ -96,6 +96,7 @@ def main():
     model_args = args_to_dict(args, model_and_diffusion_defaults().keys())
     print(model_args)
 
+    model_args["model_type"] = args.model_type
     model, diffusion = create_model_and_diffusion(**model_args)
     model.to(dist_util.dev())
 
@@ -117,7 +118,7 @@ def main():
     # Sampler Multi-GPU
     sampler = DistributedSampler(dataset, shuffle=True)
     loader_args = dict(num_workers=args.num_workers, pin_memory=True)
-    
+
     # DataLoader
     train_loader = DataLoader(
         dataset,
