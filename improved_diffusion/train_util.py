@@ -233,17 +233,27 @@ class TrainLoop:
                     self.ema_model = self.ema_model.to(dist_util.dev())
                     self.ema_model.load_state_dict(self._master_params_to_state_dict(self.ema_params[0]))
                     self.ema_model.eval()
-                    ema_val_miou = sampling_major_vote_func(self.diffusion, self.ema_model, output_folder=output_folder,
-                                                        dataset=self.val_dataset, logger=self.logger,
-                                                        clip_denoised=self.clip_denoised, step=self.step, n_rounds=len(self.val_dataset))
+
+                    ema_val_psnr = CMR_sampling_major_vote_func(
+                        batch_size=self.batch_size, 
+                        diffusion=self.diffusion, 
+                        model=self.ema_model, 
+                        output_folder=output_folder,
+                        dataset=self.val_dataset, 
+                        logger=self.logger
+                    )
                     self.ema_model = self.ema_model.to(th.device("cpu")) # release gpu memory
 
-                    if dist.get_rank() == 0:
-                        if self.ema_val_best_iou < ema_val_miou:
-                            logger.log(f"best iou ema val: {ema_val_miou} step {self.step}")
-                            self.ema_val_best_iou = ema_val_miou
+                    # On sauvegarde le modèle s'il a battu le record de PSNR
+                    if dist.get_rank() == 0 and ema_val_psnr is not None:
+                        if not hasattr(self, 'ema_val_best_psnr'):
+                            self.ema_val_best_psnr = 0.0 # Initialisation du meilleur PSNR
 
-                            ema_filename = self.save_checkpoint(self.ema_rate[0], self.ema_params[0], name=f"val_{ema_val_miou:.7f}")
+                        if self.ema_val_best_psnr < ema_val_psnr:
+                            logger.log(f"NOUVEAU RECORD ! best PSNR ema val: {ema_val_psnr:.4f} step {self.step}")
+                            self.ema_val_best_psnr = ema_val_psnr
+
+                            ema_filename = self.save_checkpoint(self.ema_rate[0], self.ema_params[0], name=f"val_PSNR_{ema_val_psnr:.4f}")
 
                             if self.val_current_model_ema_name != "":
                                 ckpt_path = bf.join(get_blob_logdir(), self.val_current_model_ema_name)

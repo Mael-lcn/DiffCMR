@@ -58,12 +58,12 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
     # Configuration du Dataloader Multi-GPU
     sampler = DistributedSampler(dataset, shuffle=False)
     dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=2, drop_last=False)
-    
+
     # --- NOUVEAU : Listes pour nos métriques scientifiques ---
     psnr_list, ssim_list, nmse_list, time_list = [], [], [], []
 
     model.eval()
-    
+
     for b, batch in enumerate(dataloader):
         condition_on = batch["input"].to(dist_util.dev())
         GT = batch["GT"].to(dist_util.dev())
@@ -162,13 +162,15 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
         logger.log(f"NMSE Moyen        : {total_nmse:.6f}")
         logger.log(f"Temps par Image   : {total_time:.4f} secondes")
         logger.log("="*40 + "\n")
-        
+
         logger.logkv("test_psnr", total_psnr)
         logger.logkv("test_ssim", total_ssim)
         logger.logkv("test_nmse", total_nmse)
         logger.logkv("test_time_per_img", total_time)
+        return total_psnr
 
-    return
+    return 0.0
+
 
 
 def CMR_GTINPUT_sampling_major_vote_func(batch_size, diffusion_model, ddp_model, output_folder, dataset, logger, clip_denoised, vote_num=4):

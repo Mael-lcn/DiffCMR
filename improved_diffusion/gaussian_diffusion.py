@@ -745,7 +745,7 @@ class GaussianDiffusion:
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:
-                terms["loss"] = terms["sum"]
+                terms["loss"] = terms["mse"]
         else:
             raise NotImplementedError(self.loss_type)
 
