@@ -59,7 +59,7 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
     sampler = DistributedSampler(dataset, shuffle=False)
     dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=2, drop_last=False)
 
-    # --- NOUVEAU : Listes pour nos métriques scientifiques ---
+    # --- Listes pour les métriques ---
     psnr_list, ssim_list, nmse_list, time_list = [], [], [], []
 
     model.eval()
@@ -141,7 +141,7 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
     gathered_ssim = [torch.zeros_like(local_ssim) for _ in range(dist.get_world_size())]
     gathered_nmse = [torch.zeros_like(local_nmse) for _ in range(dist.get_world_size())]
     gathered_time = [torch.zeros_like(local_time) for _ in range(dist.get_world_size())]
-    
+
     dist.all_gather(gathered_psnr, local_psnr)
     dist.all_gather(gathered_ssim, local_ssim)
     dist.all_gather(gathered_nmse, local_nmse)
@@ -153,7 +153,7 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
         total_ssim = torch.cat(gathered_ssim).mean().item()
         total_nmse = torch.cat(gathered_nmse).mean().item()
         total_time = torch.cat(gathered_time).mean().item()
-        
+
         logger.log("\n" + "="*40)
         logger.log("=== RÉSULTATS MÉTRIQUES (TEST COMPLET) ===")
         logger.log("="*40)

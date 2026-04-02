@@ -25,7 +25,7 @@ class CMRxReconDataset(Dataset):
             train_pairs_lines = train_pairs_lines[:length]
         if limit_val:
             random.Random(666).shuffle(train_pairs_lines)
-            train_pairs_lines = train_pairs_lines[:24]
+            train_pairs_lines = train_pairs_lines[:8]
 
         #  On crée une liste de pointeurs vers chaque frame
         self.all_slices = []
@@ -35,7 +35,7 @@ class CMRxReconDataset(Dataset):
             parts = line.strip().split(" ")
             if len(parts) < 2: continue
             path, gt_path = parts[0], parts[1]
-            
+
             try:
                 # On utilise mmap_mode pour obtenir la forme sans charger le fichier
                 vol_shape = np.load(path, mmap_mode='r').shape

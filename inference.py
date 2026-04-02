@@ -37,6 +37,8 @@ def create_argparser():
         batch_size=8,
         vote_num=4,
         num_workers=4,
+
+        model_type="diffusion",
     )
 
     final_defaults = model_and_diffusion_defaults()
@@ -66,6 +68,8 @@ def main():
     # Création du Modèle et de la Diffusion
     logger.log(f"Loading model and diffusion (Steps: {args.diffusion_steps})...")
     model_args = args_to_dict(args, model_and_diffusion_defaults().keys())
+
+    model_args["model_type"] = args.model_type
     model, diffusion = create_model_and_diffusion(**model_args)
 
     # Chargement des poids
@@ -79,6 +83,7 @@ def main():
     tsfm = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize((args.image_size, args.image_size)),
+        transforms.Normalize(mean=[0.5, 0.5], std=[0.5, 0.5]),
     ])
 
     dataset = CMRxReconDataset(args.val_pair_file, transform=tsfm, length=-1, limit_val=False)
@@ -96,7 +101,7 @@ def main():
         dataset=dataset,
         logger=logger,
         is_inference=True,
-        vote_num=args.vote_num
+        vote_num=args.vote_num,
     )
 
     if dist.get_rank() == 0:
