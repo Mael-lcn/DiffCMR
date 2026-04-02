@@ -38,6 +38,9 @@ def create_argparser():
         vote_num=4,
         num_workers=4,
 
+        timestep_respacing="100",    # Accélération à 100 pas pour l'inférence
+        use_fp16=True,
+
         model_type="diffusion",
     )
 
