@@ -89,7 +89,7 @@ def main():
         transforms.Normalize(mean=[0.5, 0.5], std=[0.5, 0.5]),
     ])
 
-    dataset = CMRxReconDataset(args.val_pair_file, transform=tsfm, length=-1, limit_val=False)
+    dataset = CMRxReconDataset(args.val_pair_file, transform=tsfm, length=20, limit_val=False)
 
     if dist.get_rank() == 0:
         logger.log(f"Taille du jeu de validation : {len(dataset)}")

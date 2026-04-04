@@ -20,7 +20,7 @@ class CMRxReconDataset(Dataset):
 
         with open(file_path, "r") as f:
             train_pairs_lines = f.readlines()
-        
+
         if length > 0 and not limit_val:
             train_pairs_lines = train_pairs_lines[:length]
         if limit_val:
@@ -30,7 +30,7 @@ class CMRxReconDataset(Dataset):
         #  On crée une liste de pointeurs vers chaque frame
         self.all_slices = []
         print(f"Indexation des volumes dans {file_path.split('/')[-1]}...")
-        
+
         for line in train_pairs_lines:
             parts = line.strip().split(" ")
             if len(parts) < 2: continue
@@ -54,10 +54,9 @@ class CMRxReconDataset(Dataset):
     def __getitem__(self, index):
         path, GT_path, frame_idx = self.all_slices[index]
 
-        # --- CORRECTION MMAP : Très important pour Jean Zay ---
         item_full = np.load(path, mmap_mode='r')
         GT_item_full = np.load(GT_path, mmap_mode='r')
-        
+
         # On ne convertit en float32 que la frame extraite
         item = np.array(item_full[frame_idx], dtype=np.float32)
         GT_item = np.array(GT_item_full[frame_idx], dtype=np.float32)
@@ -92,19 +91,21 @@ if __name__ == "__main__":
     tsfm = transforms.Compose([
         transforms.ToTensor(),
         transforms.CenterCrop(256),                  # On zoome sur le coeur
-        transforms.Resize((64, 64), antialias=True), # On réduit à la taille de ton modèle
+        transforms.Resize((128, 128), antialias=True), # On réduit à la taille de ton modèle
         transforms.Normalize(mean=[0.5, 0.5], std=[0.5, 0.5]),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
     ])
 
     test_file = "/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/TrainingSet/pairs.txt"
+    valpairfile = "/lustre/fsn1/projects/rech/iql/uri76kx/ig3d_CMRxRecon/data/ValidationSet/pairs.txt"
 
     if os.path.exists(test_file):
-        # On limite le scan à 5 patients pour que le test démarre instantanément
-        training_set = CMRxReconDataset(test_file, transform=tsfm, length=5)
+        training_set = CMRxReconDataset(test_file, transform=tsfm)
+        val_set = CMRxReconDataset(valpairfile, transform=tsfm)
 
         print(f"Nombre total de frames générées par ces 5 patients : {len(training_set)}")
+        print(f"Nombre total de frames générées par ces 5 patients : {len(val_set)}")
 
         if len(training_set) > 0:
             pair0 = training_set[0] # On prend la toute première frame du premier patient
