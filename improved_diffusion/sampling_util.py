@@ -94,7 +94,7 @@ def CMR_sampling_major_vote_func(batch_size, diffusion, model, output_folder, da
 
         end_time = time.time()
         inference_time = (end_time - start_time) / condition_on.shape[0] # Temps par image
-        
+
         final_sample = (final_sample + 1.0) / 2.0
         final_sample = torch.clamp(final_sample, 0.0, 1.0)
         
